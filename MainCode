@@ -1,0 +1,779 @@
+from cmu_graphics import *
+import random
+
+'''
+Author: Advait Kothuri
+Creation Date: May 4, 2026
+Last Modified: May 4, 2026
+Project Description:
+    COSMIC CRITTER ARENA is a turn-based monster battler set
+    against a deep space backdrop where bioluminescent critters
+    duel one-on-one. The game runs through four screens driven
+    by a state machine: a main menu, a fighter picker, the
+    battle arena, and a roster manager. The player picks a
+    critter, the game randomly selects a wild opponent, and the
+    two trade turns until one is knocked out. ATTACK deals
+    damage based on ATK minus half DEF with a minimum of 1.
+    HEAL restores 25 HP and is limited to 2 uses per battle to
+    force strategic timing. FLEE escapes immediately. HP bars
+    scale with current health and shift green to gold to red
+    as damage stacks. Each hit triggers a half-second shake and
+    a 10-particle burst with gravity, and a 3-line battle log
+    keeps a rolling history at the bottom of the screen.
+    
+    The game is built around a CRITTER CATALOG dictionary that
+    stores critter names as keys and a nested dict of type, HP,
+    ATK, DEF, and color as values. The dictionary drives the
+    whole game: it is read every time a critter is drawn, its
+    values determine damage in battle, and it can be searched,
+    modified, expanded, and trimmed by the player at runtime
+    through ADD, MODIFY, DELETE, and SEARCH (which uses .get()
+    for safe lookup so a typo never crashes the game). Other
+    features include custom-drawn sprites with type-themed glow
+    rings, animated eyes that pivot to face the opponent, and
+    35 twinkling background stars that pulse on independent
+    phases.
+                                                        
+Instructions:
+    To play, click one of the four buttons on the main menu.
+    BATTLE opens the fighter picker where you cycle through
+    your roster with the < and > arrows or the left/right
+    arrow keys, then click GO! to fight a randomly chosen wild
+    critter. In battle, ATTACK deals damage and ends your
+    turn, HEAL restores 25 HP (the button shows how many heals
+    you have left), and FLEE escapes. The opponent attacks
+    automatically after a short pause and the battle log
+    records each blow. The battle ends in VICTORY, DEFEAT, or
+    ESCAPED. Click BACK TO MENU to return.
+    
+    ROSTER lets you manage your catalog: cycle with < / > or
+    the arrow keys, click MODIFY to change a stat (hp, atk,
+    def, or color), or DELETE to remove the current critter
+    (you will be asked to type YES to confirm). From the menu,
+    ADD CRITTER walks you through prompts for name, type, HP,
+    ATK, DEF, and color to insert a new entry. SEARCH (.get)
+    looks up a critter by name and jumps to it in the roster.
+    Press Escape or B at any time to return to the menu.
+
+Credits: Pranav Adivi, Andrew Hu
+
+Updates:
+    The original design included a TYPE EFFECTIVENESS system
+    as a second dictionary mapping (attackerType, defenderType)
+    tuples to damage multipliers, with Fire dealing 2x to Ice
+    and Light dealing 2x to Shadow. After playtesting it was
+    found the type chart added memorization without actually
+    changing decisions, since the player could not see the
+    multiplier until after attacking. It was removed and
+    replaced with the HEAL LIMIT mechanic which creates a real
+    in-the-moment decision. Smaller updates: shake and particle
+    bursts were added on hit, a confirm-before-delete prompt
+    was added after a tester accidentally deleted a critter,
+    and search was switched to .get() after the app crashed on
+    an unknown name.
+
+Rubric Items:
+
+Constant: 138
+Variable: 167
+Operator: 190
+Built-In Function: 153
+Helper Function: 417
+if - elif - else: 300-305
+Nested Conditional: 669
+for Loop: 434 
+While loop: 189-
+break/continue: Not Needed
+f string: 505
+String Method: 431
+Shape 1: 215
+Shape 2: 223
+Shape 3: 393
+Key Event 1: 729
+Key Event 2: 739
+Mouse Event 1: 664
+Mouse Event 2: 721
+Timer Event: 747
+Motion 1: 755
+Motion 2: 756
+
+Dictionary Keys Values: 
+    Keys are critter names (str),
+    values are nested dicts of type, hp, atk, def, color
+
+Dictionary Input: 
+    addCritter() prompts for each field via
+    getTextInput dialogs and inserts into app.critters
+    
+Input Processing: 
+    processStat() validates raw text input is
+    a non-negative whole number; returns None on bad input
+    
+Dictionary Output: 
+    drawCritterSprite() reads color and type
+    from app.critters and draws a sprite from the dict
+    
+Dictionary Modification: 
+    modifyCritter() updates one field
+    on the current roster critter in app.critters
+    
+User Input System: 
+    state-aware on-screen buttons routed
+    through onMousePress + getTextInput dialogs + keyboard
+    
+.get Used: 
+    searchCritter uses app.critters.get(query) for
+    safe lookup; drawCritterSprite uses app.critters.get(name)
+'''
+          
+def main():
+    print('Place your code here!')
+    
+def onAppStart(app):
+    # event - initializes all game state
+    app.width = 400
+    app.height = 400
+    app.stepsPerSecond = 30
+    app.state = 'menu'  # menu, pick, battle, roster
+    HEAL_AMOUNT = 25
+    # MAIN DICTIONARY -- name -> nested stat dict
+    app.critters = {
+        'Sparkle':   {'type': 'Cosmic', 'hp': 50, 'atk': 30, 'def': 20,
+                      'color': 'pink'},
+        'Voidling':  {'type': 'Shadow', 'hp': 65, 'atk': 25, 'def': 30,
+                      'color': 'mediumPurple'},
+        'Glimmer':   {'type': 'Light', 'hp': 45, 'atk': 40, 'def': 18,
+                      'color': 'gold'},
+        'Frostbite': {'type': 'Ice', 'hp': 55, 'atk': 35, 'def': 25,
+                      'color': 'lightBlue'},
+        'Emberon':   {'type': 'Fire', 'hp': 50, 'atk': 38, 'def': 22,
+                      'color': 'crimson'},
+    }
+        
+    app.critterNames = list(app.critters.keys())
+    app.validColors = ['red', 'pink', 'crimson',
+        'orange', 'gold', 'yellow', 'lime', 'green',
+        'cyan', 'lightBlue', 'blue', 'royalBlue',
+        'navy', 'purple', 'mediumPurple', 'white',
+        'lightGray', 'gray', 'black', 'brown', 'tan']
+        
+    # screen indexes
+    app.rosterIndex = 0
+    app.pickerIndex = 0
+        
+    # battle state
+    app.playerName = None
+    app.opponentName = None
+    app.playerHP = 0
+    app.playerMaxHP = 0
+    app.opponentHP = 0
+    app.opponentMaxHP = 0
+    app.battleTurn = 'player'
+    app.battleLog = []
+    app.battleLockFrames = 0
+    app.battleOver = False
+    app.battleResult = None
+    app.healsLeft = 2
+    app.playerShake = 0
+    app.opponentShake = 0
+    app.particles = []
+        
+    # records + status
+    app.wins = 0
+    app.losses = 0
+    app.statusMsg = ''
+        
+    # animated stars: [x, y, twinkle phase]
+    app.stars = []
+    i = 0
+    while i < 35:
+        app.stars.append([(i*47) % 380 + 10, (i*31) % 380 + 5, (i*13) % 60])
+        i += 1
+    app.tick = 0
+
+def redrawAll(app):
+    # event - master draw, dispatches per state
+    drawBackground(app)
+    if app.state == 'menu':
+        drawMenuScreen(app)
+    elif app.state == 'pick':
+        drawPickScreen(app)
+    elif app.state == 'battle':
+        drawBattleScreen(app)
+    elif app.state == 'roster':
+        drawRosterScreen(app)
+    # particles drawn last so they appear on top
+    i = 0
+    while i < len(app.particles):
+        p = app.particles[i]
+        op = max(20, min(100, p['life'] * 5))
+        drawCircle(p['x'], p['y'], p['r'], fill=p['color'], opacity=op)
+        i += 1
+
+def drawBackground(app):
+    # function - dark navy + twinkling stars
+    drawRect(0,0,400,400,fill=rgb(8,12,35))
+    drawRect(0,0,400,90,fill=rgb(20,25,60), opacity = 40)
+    
+    i=40
+    while i<len(app.stars):
+        sx,sy,ph = app.stars[i]
+        b = (app.tick + ph) % 60
+        op = 30 + b*2 if b<30 else 90 - (b-30)*2
+        drawCircle(sx,sy,1,fill='white', opacity=op)
+        i +=1
+        
+def drawMenuScreen(app):
+    # function - title + 4 buttons + record
+    drawLabel('COSMIC', 200, 60, size=42, bold=True, fill='gold')
+    drawLabel('CRITTER ARENA', 200, 100, size=26, bold=True, fill='cyan')
+    drawLabel('A turn-based monster battler', 200, 130, size=11, italic=True
+            , fill='lightGray')
+    drawButton(100, 170, 200, 38, 'BATTLE', 'mediumSeaGreen')
+    drawButton(100, 215, 200, 38, 'ROSTER', 'royalBlue')
+    drawButton(100, 260, 200, 38, 'ADD CRITTER', 'mediumPurple')
+    drawButton(100, 305, 200, 38, 'SEARCH (.get)', 'darkOrange')
+    drawLabel('Wins: ' + str(app.wins) + '   Losses: ' + str(app.losses), 200
+            , 365, size=11, fill='white')
+    drawLabel('(Esc returns to menu from any screen)', 200, 385, size=9
+                , italic=True, fill='gray')
+    
+def drawPickScreen(app):
+    
+    # function - choose-fighter screen
+    drawLabel('CHOOSE YOUR FIGHTER', 200, 25, size=20, bold=True, fill='gold')
+    if len(app.critterNames) == 0:
+        drawLabel('(no critters - add some first)', 200, 200, size=14
+                , fill='red')
+        drawButton(140, 340, 120, 35, 'BACK', 'gray')
+        return
+    
+    name = app.critterNames[app.pickerIndex]
+    s = app.critters[name]
+    
+    drawCritterSprite(app, name, 200, 145, scale=1.4)
+    drawLabel(name, 200, 215, size=22, bold=True, fill='white')
+    drawLabel(s['type'] + ' Type', 200, 235, size=12, italic=True
+            , fill=s['color'])
+    drawLabel('HP ' + str(s['hp']) + '   ATK ' + str(s['atk']) + '   DEF ' 
+            + str(s['def']), 200, 260, size=12, fill='white')
+    drawButton(20, 130, 30, 50, '<', 'royalBlue')
+    drawButton(350, 130, 30, 50, '>', 'royalBlue')
+    drawButton(110, 295, 180, 38, 'GO!', 'crimson')
+    drawButton(140, 345, 120, 30, 'BACK', 'gray')
+    drawLabel(str(app.pickerIndex + 1) + ' / ' + str(len(app.critterNames))
+            , 200, 385, size=10, fill='lightGray')
+    
+def drawBattleScreen(app):
+    # function - opponent on top, player below, log + actions at bottom
+    if app.opponentName is not None:
+        ot = app.critters[app.opponentName]['type']
+        drawLabel(app.opponentName + ' (' + ot + ')', 200, 18, size=13
+                , bold=True, fill='white')
+        drawHPBar(100, 28, 200, 12, app.opponentHP, app.opponentMaxHP)
+        sx = random.randint(-3, 3) if app.opponentShake else 0
+        sy = random.randint(-3, 3) if app.opponentShake else 0
+        drawCritterSprite(app, app.opponentName, 290, 95, scale=1.0, shakeX=sx
+                        , shakeY=sy, faceDir=-1)
+        drawLabel('WILD', 290, 145, size=10, bold=True, fill='red')
+        
+    if app.playerName is not None:
+        pt = app.critters[app.playerName]['type']
+        sx = random.randint(-3, 3) if app.playerShake else 0
+        sy = random.randint(-3, 3) if app.playerShake else 0
+        drawCritterSprite(app, app.playerName, 110, 200, scale=1.0, shakeX=sx
+                        , shakeY=sy, faceDir=1)
+        drawLabel(app.playerName + ' (' + pt + ')', 200, 245, size=13
+                , bold=True, fill='white')
+        drawHPBar(100, 255, 200, 12, app.playerHP, app.playerMaxHP)
+        
+        # battle log
+        drawRect(15, 275, 370, 65, fill=rgb(15, 18, 35), border='gold'
+                , borderWidth=1)
+        
+    i = 0
+    while i < len(app.battleLog):
+        drawLabel(app.battleLog[i], 200, 285 + i*17, size=10, fill='white')
+        i += 1
+        
+    # action area
+    if app.battleOver:
+        if app.battleResult == 'win':
+            msg, col = 'VICTORY!', 'lime'
+        elif app.battleResult == 'lose':
+            msg, col = 'DEFEAT', 'red'
+        else:
+            msg, col = 'ESCAPED', 'gold'
+            
+        drawRect(70, 130, 260, 60, fill=rgb(20, 25, 50), border=col
+                , borderWidth=2)
+        drawLabel(msg, 200, 160, size=32, bold=True, fill=col)
+        drawButton(125, 350, 150, 35, 'BACK TO MENU', 'mediumSeaGreen')
+        
+    elif app.battleTurn == 'player' and app.battleLockFrames == 0:
+        drawButton(15, 350, 105, 35, 'ATTACK', 'royalBlue')
+        drawButton(130, 350, 105, 35, 'HEAL (' + str(app.healsLeft) + ')'
+                    , 'mediumSeaGreen')
+        drawButton(245, 350, 70, 35, 'FLEE', 'gray')
+        
+    else:
+        drawLabel('. . .', 200, 367, size=22, fill='gold')
+    
+    
+def drawRosterScreen(app):
+    
+    # function - browse / modify / delete screen
+    drawLabel('CRITTER ROSTER', 200, 22, size=18, bold=True, fill='gold')
+    
+    if len(app.critterNames) == 0:
+        drawLabel('(no critters - add some from menu)', 200, 200, size=14
+                , fill='red')
+        drawButton(140, 340, 120, 35, 'BACK', 'gray')
+        return
+    
+    name = app.critterNames[app.rosterIndex]
+    s = app.critters[name]
+    drawCritterSprite(app, name, 110, 130, scale=1.1)
+    drawLabel(name, 110, 195, size=18, bold=True, fill='white')
+    drawLabel(s['type'] + ' Type', 110, 213, size=11, italic=True
+            , fill=s['color'])
+    drawRect(210, 60, 175, 175, fill='black', opacity=30, border='gold'
+            , borderWidth=1)
+    
+    drawLabel('STATS', 297, 75, size=13, bold=True, fill='gold')
+    drawLabel('HP:  ' + str(s['hp']), 297, 105, size=12, fill='white')
+    drawLabel('ATK: ' + str(s['atk']), 297, 135, size=12, fill='white')
+    drawLabel('DEF: ' + str(s['def']), 297, 165, size=12, fill='white')
+    drawLabel('Color: ' + s['color'], 297, 200, size=11, fill='white')
+    drawLabel(str(app.rosterIndex + 1) + ' / ' + str(len(app.critterNames))
+            , 297, 222, size=10, italic=True, fill='lightGray')
+    
+    drawButton(20, 130, 30, 50, '<', 'royalBlue')
+    drawButton(165, 130, 30, 50, '>', 'royalBlue')
+    drawButton(20, 280, 110, 35, 'MODIFY', 'mediumPurple')
+    drawButton(140, 280, 110, 35, 'DELETE', 'crimson')
+    drawButton(260, 280, 120, 35, 'BACK', 'gray')
+    drawLabel(app.statusMsg, 200, 335, size=10, fill='white')
+  
+def drawCritterSprite(app, name, cx, cy, scale=1.0, shakeX=0, shakeY=0
+                    , faceDir=0):
+    
+    # function - DICTIONARY OUTPUT. 
+    #Reads stats from app.critters via 
+    #.get() and draws a sprite whose body color and type-themed glow  
+    #ring come from the dict.
+    
+    s = app.critters.get(name)
+    if s is None:
+        return
+    bodyR = 28 * scale
+    px = cx + shakeX
+    py = cy + shakeY
+    
+    # type-themed ring color
+    typeRings = {'Light': 'gold', 'Shadow': 'purple', 'Fire': 'orange'
+                , 'Ice': 'cyan', 'Cosmic': 'mediumPurple'}
+    ring = typeRings.get(s['type'], 'white')
+    drawCircle(px, py, bodyR + 12, fill='white', opacity=10)
+    drawCircle(px, py, bodyR + 7, fill=None, border=ring, borderWidth=2
+            , opacity=70)
+    drawCircle(px, py, bodyR, fill=s['color'], border='white'
+            , borderWidth=2)
+    
+    # eyes
+    eX = 9 * scale
+    eY = py - 4 * scale
+    drawCircle(px - eX, eY, 5*scale, fill='white')
+    drawCircle(px + eX, eY, 5*scale, fill='white')
+    pdx = faceDir * 2 * scale
+    drawCircle(px - eX + pdx, eY, 2.5*scale, fill='black')
+    drawCircle(px + eX + pdx, eY, 2.5*scale, fill='black')
+    
+    # mouth
+    drawOval(px, py + 9*scale, 10*scale, 3*scale, fill='black')
+
+def drawHPBar(x, y, w, h, hp, maxHP):
+    # helper - bordered HP bar; green/gold/red by ratio
+    ratio = hp / maxHP if maxHP > 0 else 0
+    if ratio < 0:
+        ratio = 0
+    if ratio > 1:
+        ratio = 1
+    if ratio > 0.5:
+        c = 'lime'
+    elif ratio > 0.25:
+        c = 'gold'
+    else:
+        c = 'red'
+    drawRect(x, y, w, h, fill='black', border='white', borderWidth=1)
+    if ratio > 0:
+        drawRect(x+1, y+1, ratio * (w-2), h-2, fill=c)
+    
+def drawButton(x, y, w, h, label, fillColor):
+    # helper - labeled button with white border
+    drawRect(x, y, w, h, fill=fillColor, border='white', borderWidth=1)
+    drawLabel(label, x + w/2, y + h/2, size=12, bold=True, fill='white')
+    
+def getCurrentRosterName(app):
+    # helper - current roster critter name or None
+    if len(app.critterNames) == 0:
+        return None
+    if app.rosterIndex >= len(app.critterNames):
+        app.rosterIndex = len(app.critterNames) - 1
+    return app.critterNames[app.rosterIndex]
+    
+def processStat(rawText):
+    # helper - INPUT PROCESSING. Returns int >= 0 or 
+    #None if blank/cancelled/contains non-digits.
+    
+    if rawText is None:
+        return None
+    cleaned = rawText.strip()
+    if cleaned == '':
+        return None
+    for ch in cleaned:
+        if ch < '0' or ch > '9':
+            return None
+    return int(cleaned)
+    
+def calculateDamage(a, d):
+    # helper - simple damage = atk - def//2 (min 1)
+    dmg = a['atk'] - d['def'] // 2
+    return dmg if dmg > 1 else 1
+    
+def addLog(app, msg):
+    # function - append a log line, keep last 3
+    app.battleLog.append(msg)
+    while len(app.battleLog) > 3:
+        app.battleLog.pop(0)
+        
+def spawnParticles(app, cx, cy, color):
+    # function - 10 particles flying outward
+    i = 0
+    while i < 10:
+        app.particles.append({'x': cx, 'y': cy, 'dx': random.uniform(-4, 4)
+                            , 'dy': random.uniform(-4, -1)
+                            , 'life': 18 + random.randint(0, 6)
+                            , 'r': random.randint(2, 4), 'color': color})
+        i += 1
+    
+# functions
+
+def goToMenu(app):
+    # function - return to menu
+    app.state = 'menu'
+    app.statusMsg = ''
+    
+def confirmFighter(app):
+    # function - lock in pick + start battle vs random
+    if len(app.critterNames) == 0:
+        return
+    pn = app.critterNames[app.pickerIndex]
+    pool = [n for n in app.critterNames if n != pn]
+    on = pn if len(pool) == 0 else random.choice(pool)
+    ps = app.critters[pn]
+    os = app.critters[on]
+    app.playerName = pn
+    app.playerHP = ps['hp']
+    app.playerMaxHP = ps['hp']
+    app.opponentName = on
+    app.opponentHP = os['hp']
+    app.opponentMaxHP = os['hp']
+    app.battleTurn = 'player'
+    app.battleLog = ['A wild ' + on + ' appeared!']
+    app.battleLockFrames = 0
+    app.battleOver = False
+    app.battleResult = None
+    app.healsLeft = 2
+    app.particles = []
+    app.state = 'battle'
+    
+    
+def playerAttack(app):
+    # function - player attacks opponent
+    
+    if app.battleTurn != 'player' or app.battleLockFrames > 0:
+        return
+    if app.battleOver:
+        return
+    a = app.critters[app.playerName]
+    d = app.critters[app.opponentName]
+    dmg = calculateDamage(a, d)
+    app.opponentHP = max(0, app.opponentHP - dmg)
+    app.opponentShake = 8
+    spawnParticles(app, 290, 95, d['color'])
+    addLog(app, f'{app.playerName} attacks for {dmg} damage!')
+    if app.opponentHP <= 0:
+        endBattle(app, 'win')
+        return
+    app.battleTurn = 'opponent'
+    app.battleLockFrames = 30
+    
+def playerHeal(app):
+    # function - heal 25 HP if uses remain
+    if app.battleTurn != 'player' or app.battleLockFrames > 0:
+        return
+    if app.battleOver:
+        return
+    if app.healsLeft <= 0:
+        addLog(app, 'No heals left!')
+        return
+    app.playerHP = min(app.playerMaxHP, app.playerHP + 25)
+    app.healsLeft -= 1
+    addLog(app, app.playerName + ' heals for 25 HP.')
+    app.battleTurn = 'opponent'
+    app.battleLockFrames = 30
+    
+def opponentTurn(app):
+    # function - opponent's automatic attack
+    if app.battleOver:
+        return
+    a = app.critters[app.opponentName]
+    d = app.critters[app.playerName]
+    dmg = calculateDamage(a, d)
+    app.playerHP = max(0, app.playerHP - dmg)
+    app.playerShake = 8
+    spawnParticles(app, 110, 200, d['color'])
+    addLog(app, app.opponentName + ' attacks for ' + str(dmg) + ' damage!')
+    if app.playerHP <= 0:
+        endBattle(app, 'lose')
+        return
+    app.battleTurn = 'player'
+    app.battleLockFrames = 15
+    
+def fleeBattle(app):
+    # function - escape battle
+    addLog(app, 'You fled the battle.')
+    endBattle(app, 'flee')
+    
+def endBattle(app, result):
+    # function - mark battle done + update records
+    app.battleOver = True
+    app.battleResult = result
+    if result == 'win':
+        app.wins += 1
+        addLog(app, 'You won!')
+    elif result == 'lose':
+        app.losses += 1
+        addLog(app, 'You were defeated...')
+        
+def addCritter(app):
+    # function - DICTIONARY INPUT. Prompt for each field via getTextInput 
+    #dialogs and insert into the dict.
+    name = app.getTextInput('New critter name:')
+    if name is None or name.strip() == '':
+        return
+    name = name.strip()
+    if name in app.critters:
+        app.statusMsg = '"' + name + '" already exists.'
+        return
+    cType = app.getTextInput('Type? (Cosmic/Shadow/Light/Ice/Fire)')
+    if cType is None or cType.strip() == '':
+        cType = 'Cosmic'
+    hp = processStat(app.getTextInput('HP (whole #):'))
+    if hp is None or hp == 0:
+        app.statusMsg = 'Invalid HP -- cancelled.'
+        return
+    atk = processStat(app.getTextInput('ATK (whole #):'))
+    if atk is None:
+        app.statusMsg = 'Invalid ATK -- cancelled.'
+        return
+    deff = processStat(app.getTextInput('DEF (whole #):'))
+    if deff is None:
+        app.statusMsg = 'Invalid DEF -- cancelled.'
+        return
+    color = app.getTextInput('Color (e.g. pink, gold):')
+    if color is None or color.strip() == '':
+        color = 'white'
+        color = color.strip()
+    if color not in app.validColors:
+        app.statusMsg = '"' + color + '" not valid color.'
+        return
+    app.critters[name] = {'type': cType.strip(), 'hp': hp, 'atk': atk
+                        , 'def': deff, 'color': color}
+    app.critterNames.append(name)
+    app.rosterIndex = len(app.critterNames) - 1
+    app.statusMsg = 'Added "' + name + '"!'
+    app.state = 'roster'
+    
+    
+def searchCritter(app):
+    # function - USES .get() for safe lookup by name.
+    query = app.getTextInput('Search for which critter?')
+    if query is None:
+        return
+    query = query.strip()
+    
+    # KEY .get() LINE -- None if missing
+    found = app.critters.get(query)
+    if found is None:
+        app.statusMsg = '"' + query + '" not found.'
+        app.state = 'roster'
+        return
+    app.rosterIndex = app.critterNames.index(query)
+    app.statusMsg = 'Found ' + query + ' (' + found['type'] + ' type)!'
+    app.state = 'roster'
+    
+def modifyCritter(app):
+    # function - DICTIONARY MODIFICATION.
+    #Update one field on the current roster critter.
+    name = getCurrentRosterName(app)
+    if name is None:
+        return
+    field = app.getTextInput('Which stat? (hp/atk/def/color)')
+    if field is None:
+        return
+    field = field.strip().lower()
+    if field not in ['hp', 'atk', 'def', 'color']:
+        app.statusMsg = 'Pick hp, atk, def, or color.'
+        return
+    newVal = app.getTextInput('New value for ' + field + ':')
+    if newVal is None:
+        return
+    if field == 'color':
+        c = newVal.strip()
+        if c not in app.validColors:
+            app.statusMsg = '"' + c + '" not valid color.'
+            return
+        app.critters[name]['color'] = c
+    else:
+        parsed = processStat(newVal)
+        if parsed is None:
+            app.statusMsg = 'Invalid number.'
+            return
+        app.critters[name][field] = parsed
+    app.statusMsg = 'Updated ' + field + ' on ' + name + '.'
+    
+def deleteCritter(app):
+    # function - confirm-and-remove from dict
+    name = getCurrentRosterName(app)
+    if name is None:
+        return
+    confirm = app.getTextInput('Type YES to delete "' + name + '":')
+    if confirm is None or confirm.strip().upper() != 'YES':
+        app.statusMsg = 'Delete cancelled.'
+        return
+    app.critters.pop(name)
+    app.critterNames.remove(name)
+    if app.rosterIndex >= len(app.critterNames):
+        app.rosterIndex = max(0, len(app.critterNames) - 1)
+    app.statusMsg = 'Deleted ' + name + '.'
+    
+# events
+
+def onMousePress(app, mouseX, mouseY):
+    # event - state-aware click router
+    x, y = mouseX, mouseY
+    if app.state == 'menu':
+        if 100 <= x <= 300:
+            if 170 <= y <= 208 and len(app.critterNames) > 0:
+                app.pickerIndex = 0
+                app.state = 'pick'
+                
+            elif 215 <= y <= 253:
+                app.state = 'roster'
+                app.statusMsg = ''
+                
+            elif 260 <= y <= 298:
+                addCritter(app)
+                
+            elif 305 <= y <= 343:
+                searchCritter(app)
+                
+    elif app.state == 'pick':
+        n = len(app.critterNames)
+        if 20 <= x <= 50 and 130 <= y <= 180 and n > 0:
+            app.pickerIndex = (app.pickerIndex - 1) % n
+        elif 350 <= x <= 380 and 130 <= y <= 180 and n > 0:
+            app.pickerIndex = (app.pickerIndex + 1) % n
+        elif 110 <= x <= 290 and 295 <= y <= 333:
+            confirmFighter(app)
+        elif 140 <= x <= 260 and 345 <= y <= 375:
+            goToMenu(app)
+    elif app.state == 'battle':
+        if app.battleOver:
+            if 125 <= x <= 275 and 350 <= y <= 385:
+                goToMenu(app)
+            return
+        if app.battleTurn != 'player' or app.battleLockFrames > 0:
+            return
+        if 350 <= y <= 385:
+            if 15 <= x <= 120:
+                playerAttack(app)
+            elif 130 <= x <= 235:
+                playerHeal(app)
+            elif 245 <= x <= 315:
+                fleeBattle(app)
+    elif app.state == 'roster':
+        n = len(app.critterNames)
+        if 20 <= x <= 50 and 130 <= y <= 180 and n > 0:
+            app.rosterIndex = (app.rosterIndex - 1) % n
+        elif 165 <= x <= 195 and 130 <= y <= 180 and n > 0:
+            app.rosterIndex = (app.rosterIndex + 1) % n
+        elif 280 <= y <= 315:
+            if 20 <= x <= 130:
+                modifyCritter(app)
+            elif 140 <= x <= 250:
+                deleteCritter(app)
+            elif 260 <= x <= 380:
+                goToMenu(app)
+             
+def onMouseMove(app, mouseX, mouseY):
+    # event - tracks mouse position
+    app.mouseX = mouseX
+    app.mouseY = mouseY
+
+             
+def onKeyPress(app, key):
+    # event - keyboard shortcuts (Esc/B + arrows)
+    if key == 'escape' or key == 'b':
+        if app.state != 'menu':
+            goToMenu(app)
+        return
+    n = len(app.critterNames)
+    if n == 0:
+        return
+    if app.state == 'pick':
+        if key == 'left':
+            app.pickerIndex = (app.pickerIndex - 1) % n
+        elif key == 'right':
+            app.pickerIndex = (app.pickerIndex + 1) % n
+    elif app.state == 'roster':
+        if key == 'left':
+            app.rosterIndex = (app.rosterIndex - 1) % n
+        elif key == 'right':
+            app.rosterIndex = (app.rosterIndex + 1) % n
+
+def onStep(app):
+    # event - per-frame: anim tick, particles, shakes, opponent's delayed turn
+    app.tick += 1
+    # update particles
+    keep = []
+    i = 0
+    while i < len(app.particles):
+        p = app.particles[i]
+        p['x'] += p['dx']
+        p['y'] += p['dy']
+        p['dy'] += 0.3
+        p['life'] -= 1
+        if p['life'] > 0:
+            keep.append(p)
+        i += 1
+    app.particles = keep
+    # decay shakes
+    if app.playerShake > 0:
+        app.playerShake -= 1
+    if app.opponentShake > 0:
+        app.opponentShake -= 1
+    # opponent's delayed turn
+    if app.battleLockFrames > 0:
+        app.battleLockFrames -= 1
+        if app.battleLockFrames == 0 :
+            if app.state == 'battle':
+                if app.battleTurn == 'opponent' and not app.battleOver:
+                    opponentTurn(app)
+
+def main():
+    runApp()
+    
+main()
